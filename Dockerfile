@@ -1,5 +1,5 @@
-# Remotion render worker — Node 20 + Chromium + ffmpeg
-FROM node:20-bookworm-slim
+# Remotion render worker — Node 22 + Chromium + ffmpeg
+FROM node:22-bookworm-slim
 
 # Chromium + ffmpeg + fonts so Remotion can render headlessly
 RUN apt-get update && apt-get install -y --no-install-recommends \
