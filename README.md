@@ -1,54 +1,41 @@
-# Remotion Render Worker
+# FFmpeg Render Worker
 
-Tiny Node service that turns scene JSON into an MP4 reel and uploads it to Supabase storage.
-Replaces Creatomate — fully free on Render.com's free web-service tier (or ~$7/mo for an always-on instance).
+Tiny Node + ffmpeg service that turns scene JSON into an MP4 reel and uploads it
+to Supabase storage. Replaces the old Remotion worker — ~10× faster on the same
+free Render.com tier (no browser, no Chromium, no `delayRender`).
 
-## One-time deploy (5 min)
+## One-time deploy
 
 1. Push this folder to a public GitHub repo (or fork it).
-2. Go to https://render.com → **New → Blueprint** → connect the repo.
-   Render reads `render.yaml` and provisions a Docker web service on the free plan.
-3. In the new service's **Environment** tab, set these secrets (the blueprint
-   marks them `sync: false` so they aren't committed):
-   - `RENDER_WORKER_SECRET` — any long random string. Paste the same value into
-     Lovable's `RENDER_WORKER_SECRET` secret.
-   - `SUPABASE_URL` — your project's Supabase URL (e.g. `https://srboxnxykltplzyugvkk.supabase.co`).
-   - `SUPABASE_SERVICE_ROLE_KEY` — service-role key from Supabase project settings.
-4. Wait for the first build (~5 min — pulls Chromium + ffmpeg).
-5. Copy the public URL Render assigns (`https://remotion-worker-xxxx.onrender.com`)
-   and paste it into Lovable's `RENDER_WORKER_URL` secret.
-
-That's it. Lovable's `generate-video` edge function will POST scene JSON to
-`${RENDER_WORKER_URL}/render` and the worker writes the finished MP4 URL back
-to your Supabase `projects` table.
+2. Render.com → **New → Blueprint** → connect the repo. `render.yaml` provisions
+   a Docker web service on the free plan.
+3. In the service's **Environment** tab set:
+   - `RENDER_WORKER_SECRET` — any long random string (same value as in Lovable).
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+4. After first build (~2 min — just installs ffmpeg), copy the
+   `https://*.onrender.com` URL and paste into Lovable's `RENDER_WORKER_URL`.
 
 ## API
 
-### `GET /health`
-Returns `{ status: "ok" }`. Used by Lovable's API Status panel.
+### `GET /health` → `{ status: "ok" }`
 
 ### `POST /render`
-Headers: `x-worker-secret: <RENDER_WORKER_SECRET>`
+Headers: `x-worker-secret: <RENDER_WORKER_SECRET>`. Same JSON body as before
+(`project_id`, `render_id`, `scenes[]`, `outro_image_url`, `outro_duration`).
+Responds immediately with `{ accepted: true }` and renders in the background.
+On success/failure writes back to the `projects` row.
 
-Body:
-```json
-{
-  "project_id": "uuid",
-  "render_id": "uuid",
-  "scenes": [{ "scene": 1, "caption": "...", "narration": "...", "emotion": "hook",
-               "duration": 3.4, "video_url": "https://...", "narration_url": "https://...",
-               "highlight_words": ["WORD"], "text_size": 80 }],
-  "outro_image_url": "https://..."
-}
-```
+## How it renders
 
-Returns immediately with `{ accepted: true, render_id }` and renders in the background.
-On success, writes `{ status: "done", video_url }` to the matching `projects` row.
-On failure, writes `{ status: "failed", error }`.
+Per scene:
+1. Download b-roll mp4 + narration mp3 in parallel.
+2. ffmpeg: scale+crop to 1080x1920, loop if short, trim to scene duration,
+   burn caption (DejaVu Sans Bold, emotion-colored, black outline) near the
+   bottom-center, encode H.264 + AAC narration.
 
-## Free-tier notes
+Then build a `0a0a0a` outro with the book cover centered, and concat all
+parts with `-c copy` (no re-encode → fast).
 
-- Free Render web services sleep after 15 min of inactivity (~30s cold start
-  on first render after sleep).
-- Upgrade to the Starter plan ($7/mo) for always-on.
-- The free tier has 0.1 vCPU which renders ~30s of 1080x1920 video in ~60-90s.
+Expected speed on Render free (0.1 vCPU): ~1× realtime, so a 30s reel renders
+in ~30s. Upgrade to Starter ($7/mo, 0.5 vCPU) for ~5× realtime.
